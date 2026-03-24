@@ -7,54 +7,66 @@ import time
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TELEGRAM_THREAD_ID = os.environ.get("TELEGRAM_THREAD_ID")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-FIRST_PHOTO_ID = os.environ.get("FIRST_PHOTO_ID")
+
+# NEW: provide NEWS_ID, e.g. 4750240
+NEWS_ID = os.environ.get("NEWS_ID")
 
 
 def remove_all_params(url):
     parsed = urlparse(url)
-    clean_url = parsed._replace(query="quality=100").geturl()
-    return clean_url
+    return parsed._replace(query="quality=100").geturl()
 
 
-# 解析HTML
-def parse_html():
-    headers = {
-        "User-Agent": "curl/8.5.0",
-    }
-    photos_html = requests.get(
-        "https://mdpr.jp/photo/detail/" + FIRST_PHOTO_ID, headers=headers  # 19832821
-    ).text
+def get_first_photo_id_from_news():
+    """
+    Fetch https://mdpr.jp/music/{NEWS_ID}
+    Find first <a class="c-image__image" href="/photo/detail/XXXXX">
+    Return XXXXX
+    """
+    headers = {"User-Agent": "curl/8.5.0"}
+    news_url = f"https://mdpr.jp/music/{NEWS_ID}"
+
+    html = requests.get(news_url, headers=headers, timeout=30).text
+    soup = BeautifulSoup(html, "lxml")
+
+    a_tag = soup.find("a", class_="c-image__image")
+    if not a_tag or not a_tag.get("href"):
+        raise RuntimeError("First photo link not found on news page")
+
+    # /photo/detail/19835587 → 19835587
+    first_photo_id = a_tag["href"].rstrip("/").split("/")[-1]
+    return first_photo_id
+
+
+def parse_html(first_photo_id):
+    headers = {"User-Agent": "curl/8.5.0"}
+    photo_url = "https://mdpr.jp/photo/detail/" + first_photo_id
+
+    photos_html = requests.get(photo_url, headers=headers, timeout=30).text
     with open("photos.html", "w", encoding="utf-8") as f:
         f.write(photos_html)
 
+    soup = BeautifulSoup(photos_html, "lxml")
     picture_url_list = []
-    for img in (
-        BeautifulSoup(photos_html, "lxml")
-        .find_all("div", class_="pg-photo__body")[0]
-        .find_all("img")
-    ):
-        # print(img)
-        img_src = img["src"]
-        if "protect" not in img_src:
-            print(img_src)
-            print(remove_all_params(img_src))
-            picture_url_list.append(remove_all_params(img_src))
 
-    for img in (
-        BeautifulSoup(photos_html, "lxml")
-        .find_all("ol", class_="pg-photo__webImageList")[0]
-        .find_all("img")
-    ):
-        # print(img)
-        img_src = img["src"]
-        if "protect" not in img_src:
-            print(img_src)
-            print(remove_all_params(img_src))
-            picture_url_list.append(remove_all_params(img_src))
+    # Main image block
+    body = soup.find("div", class_="pg-photo__body")
+    if body:
+        for img in body.find_all("img"):
+            img_src = img.get("src", "")
+            if img_src and "protect" not in img_src:
+                picture_url_list.append(remove_all_params(img_src))
 
-    print(picture_url_list)
-    print(len(picture_url_list))
-    return picture_url_list
+    # Web image list
+    web_list = soup.find("ol", class_="pg-photo__webImageList")
+    if web_list:
+        for img in web_list.find_all("img"):
+            img_src = img.get("src", "")
+            if img_src and "protect" not in img_src:
+                picture_url_list.append(remove_all_params(img_src))
+
+    print("Total images:", len(picture_url_list))
+    return picture_url_list, first_photo_id
 
 
 def send_telegram_photo(caption, img_url):
@@ -66,26 +78,21 @@ def send_telegram_photo(caption, img_url):
                 "photo": img_url,
                 "caption": caption,
             }
-            if TELEGRAM_THREAD_ID is not None:
+            if TELEGRAM_THREAD_ID:
                 payload["message_thread_id"] = TELEGRAM_THREAD_ID
 
-            response = requests.post(url, json=payload)
-            response_body = response.json()
-            if "error_code" not in response_body:
+            resp = requests.post(url, json=payload)
+            if "error_code" not in resp.json():
                 time.sleep(5)
                 return
         except Exception as e:
             print(e)
             time.sleep(5)
-            pass
-
 
 
 def send_telegram_file_link(caption, file_link):
     max_retries = 5
-    attempt = 0
-
-    while attempt < max_retries:
+    for _ in range(max_retries):
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
             payload = {
@@ -94,58 +101,56 @@ def send_telegram_file_link(caption, file_link):
                 "document": file_link,
                 "parse_mode": "HTML",
             }
-            if TELEGRAM_THREAD_ID is not None:
+            if TELEGRAM_THREAD_ID:
                 payload["message_thread_id"] = TELEGRAM_THREAD_ID
-            response = requests.post(url, data=payload, timeout=60)
-            body = response.json()
-            if "error_code" not in body:
+
+            resp = requests.post(url, data=payload, timeout=60)
+            if "error_code" not in resp.json():
                 return True
             else:
-                # Print for diagnostics; still return False to trigger fallback if desired
-                print("sendDocument link error:", body)
+                print("sendDocument error:", resp.json())
         except Exception as e:
             print(e)
-            # Try again (you can add a counter if you want to limit retries)
             time.sleep(20)
-            attempt += 1
+    return False
 
 
 def send_telegram_message(caption):
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
             payload = {
                 "chat_id": TELEGRAM_CHAT_ID,
                 "text": caption,
                 "parse_mode": "HTML",
             }
-            if TELEGRAM_THREAD_ID is not None:
+            if TELEGRAM_THREAD_ID:
                 payload["message_thread_id"] = TELEGRAM_THREAD_ID
 
-            response = requests.post(url, data=payload)
-            response_body = response.json()
-            if "error_code" not in response_body:
+            resp = requests.post(url, data=payload)
+            if "error_code" not in resp.json():
                 time.sleep(5)
                 return
             else:
-                print(response_body)
-                time.sleep(5)
+                print(resp.json())
                 return
         except Exception as e:
             print(e)
             time.sleep(5)
-            pass
 
 
-picture_url_list = parse_html()
-import datetime
+# =========================
+# MAIN FLOW
+# =========================
 
-for i in range(len(picture_url_list)):
-    picture_url = picture_url_list[i]
+first_photo_id = get_first_photo_id_from_news()
+picture_url_list, first_photo_id = parse_html(first_photo_id)
 
+for i, picture_url in enumerate(picture_url_list):
     send_telegram_file_link(
-        f"{i+1}/{len(picture_url_list)}",
+        f"{i + 1}/{len(picture_url_list)}",
         picture_url,
     )
-    send_telegram_message("https://mdpr.jp/photo/detail/" + FIRST_PHOTO_ID)
+    send_telegram_message(
+        "https://mdpr.jp/photo/detail/" + first_photo_id
+    )

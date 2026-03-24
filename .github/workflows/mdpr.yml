@@ -5,8 +5,8 @@ on:
   #   - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
-      FIRST_PHOTO_ID:
-        description: 'FIRST_PHOTO_ID'
+      NEWS_ID:
+        description: 'NEWS_ID'
         required: true
         type: string
 
@@ -38,4 +38,4 @@ jobs:
           TELEGRAM_CHAT_ID: '-1002646331785'
           TELEGRAM_THREAD_ID: '4812'
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          FIRST_PHOTO_ID: ${{ inputs.FIRST_PHOTO_ID }} 
+          NEWS_ID: ${{ inputs.NEWS_ID }} 
