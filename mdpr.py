@@ -146,11 +146,10 @@ def send_telegram_message(caption):
 first_photo_id = get_first_photo_id_from_news()
 picture_url_list, first_photo_id = parse_html(first_photo_id)
 
+send_telegram_message("https://mdpr.jp/photo/detail/" + first_photo_id)
+
 for i, picture_url in enumerate(picture_url_list):
     send_telegram_file_link(
         f"{i + 1}/{len(picture_url_list)}",
         picture_url,
-    )
-    send_telegram_message(
-        "https://mdpr.jp/photo/detail/" + first_photo_id
     )
